@@ -1,0 +1,59 @@
+#!/usr/bin/bash
+
+set -euo pipefail
+
+apt-user.fix-pc() # [directory]...
+{
+	for directory in "$@"
+	do
+		pushd "$directory" > /dev/null
+			for file in *.pc
+			do
+				sed -e "s|^prefix=/usr|prefix=$HOME/.local/usr|g" -i "$file"
+			done
+		popd > /dev/null
+	done
+}
+
+apt-user.install() # [package]...
+{
+	local tmp_dir
+	local dependencies dependency
+
+	for package in "$@"
+	do
+		tmp_dir="$(mktemp --directory)"
+
+		pushd "$tmp_dir" >/dev/null
+			echo "Downloading '$package' and dependencies..."
+			dependencies=($(apt-rdepends "$package" | grep -v -e '^ ' -e '^dbus-session-bus$' -e '^default-dbus-session-bus$' -e '^gsettings-backend$' -e '^fonts-freefont$' -e '^debconf-2.0$' -e '^qtbase-abi-5-12-8$'))
+
+			for dependency in "${dependencies[@]}"
+			do
+				dpkg -s "$dependency" || apt-get download "$dependency"
+			done
+
+			for archive in *.deb
+			do
+				echo "Unpacking '$archive'..."
+				dpkg -x "$archive" ~/.local
+			done
+		popd > /dev/null
+
+		pushd "$HOME/.local" > /dev/null
+			echo "Fixing pkgconfig files..."
+			apt-user.fix-pc \
+				usr/lib/x86_64-linux-gnu/pkgconfig \
+				usr/share/pkgconfig
+		popd > /dev/null
+
+		rm -rf "$tmp_dir"
+	done
+}
+
+CMD="$1"; shift
+
+case "$CMD" in
+	install)	apt-user.install "$@";;
+	*)			echo "Unsupported command: '$CMD'!" >&2; exit 1;;
+esac
